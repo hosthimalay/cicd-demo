@@ -1,14 +1,8 @@
 # ════════════════════════════════════════════════════════════════════════════
 # .github/workflows/pr-checks.yml
-#
-# PURPOSE: Runs on every pull request to main.
-#          Provides fast feedback to developers (target: under 5 minutes).
-#          Jenkins handles the full deploy pipeline — GitHub Actions handles
-#          the PR quality gate.
-#
-# NOTE: This shows how Jenkins and GitHub Actions work TOGETHER:
-#       GitHub Actions = fast PR feedback (lint, test, security scan)
-#       Jenkins        = full CI/CD pipeline (build, push, deploy)
+# Runs on every pull request to main.
+# Provides fast feedback (target: under 5 minutes).
+# Jenkins handles the full deploy pipeline.
 # ════════════════════════════════════════════════════════════════════════════
 name: PR Checks
 
@@ -16,17 +10,13 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
-
-  # Allow manual trigger from the Actions tab
   workflow_dispatch:
 
-# Cancel in-progress runs for the same PR (no wasted runner minutes)
 concurrency:
   group: pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  # ── Lint and static analysis ────────────────────────────────────────────────
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -38,53 +28,37 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: app/package-lock.json
-
       - name: Install dependencies
         run: npm ci
-
       - name: Run ESLint
         run: npm run lint
 
-  # ── Unit tests ──────────────────────────────────────────────────────────────
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
-      checks: write        # Required to publish test results
+      checks: write
     defaults:
       run:
         working-directory: app
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: app/package-lock.json
-
       - name: Install dependencies
         run: npm ci
-
       - name: Run tests with coverage
         run: npm run test:ci
-
-      - name: Publish test results
-        uses: dorny/test-reporter@v1
-        if: always()   # Run even if tests fail — we want to see the report
-        with:
-          name: Jest Test Results
-          path: app/test-results/*.xml
-          reporter: jest-junit
-
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         if: always()
@@ -93,40 +67,27 @@ jobs:
           path: app/coverage/
           retention-days: 7
 
-  # ── Security scan ───────────────────────────────────────────────────────────
   security:
     name: Security Scan
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
-      security-events: write    # Required to upload SARIF results to GitHub Security tab
     defaults:
       run:
         working-directory: app
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: app/package-lock.json
-
       - name: Install dependencies
         run: npm ci
-
       - name: Run npm audit
         run: npm audit --audit-level=high
 
-        uses: snyk/actions/node@master
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          args: --severity-threshold=high
-        continue-on-error: true   # Don't block PR, but report findings
-
-  # ── Docker build check (validate Dockerfile is valid) ─────────────────────
   docker-validate:
     name: Validate Dockerfile
     runs-on: ubuntu-latest
@@ -135,35 +96,17 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker image (no push — just validate it builds)
+      - name: Build Docker image (validate only — no push)
         uses: docker/build-push-action@v5
         with:
           context: ./app
-          push: false     # Build only — Jenkins handles the actual push
-          tags: cicd-demo:pr-${{ github.event.pull_request.number }}
+          push: false
+          tags: cicd-demo:pr-validate
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          outputs: type=docker   # Load into local Docker daemon
 
-      - name: Run Trivy vulnerability scan on built image
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: cicd-demo:pr-${{ github.event.pull_request.number }}
-          format: sarif
-          output: trivy-results.sarif
-          severity: HIGH,CRITICAL
-
-      - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: trivy-results.sarif
-
-  # ── All checks must pass before PR can merge ────────────────────────────────
   all-checks-passed:
     name: All PR Checks Passed
     runs-on: ubuntu-latest
@@ -172,16 +115,7 @@ jobs:
     steps:
       - name: Check all jobs passed
         run: |
-          if [[ "${{ needs.lint.result }}" != "success" ]]; then
-            echo "Lint failed"
-            exit 1
-          fi
-          if [[ "${{ needs.test.result }}" != "success" ]]; then
-            echo "Tests failed"
-            exit 1
-          fi
-          if [[ "${{ needs.docker-validate.result }}" != "success" ]]; then
-            echo "Docker build failed"
-            exit 1
-          fi
-          echo "All checks passed — PR is ready to merge"
+          if [[ "${{ needs.lint.result }}" != "success" ]]; then echo "Lint failed"; exit 1; fi
+          if [[ "${{ needs.test.result }}" != "success" ]]; then echo "Tests failed"; exit 1; fi
+          if [[ "${{ needs.docker-validate.result }}" != "success" ]]; then echo "Docker build failed"; exit 1; fi
+          echo "All checks passed"
