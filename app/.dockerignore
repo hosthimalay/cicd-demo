@@ -1,0 +1,36 @@
+# Version control
+.git
+.gitignore
+
+# CI/CD files (not needed in image)
+Jenkinsfile
+.github/
+.jenkins/
+
+# Dev dependencies and test output
+node_modules
+coverage/
+*.test.js
+jest.config.js
+.eslintrc*
+
+# Docs and config
+*.md
+docs/
+
+# Environment files (secrets must NEVER be baked into images)
+.env
+.env.*
+*.env
+
+# Build artefacts
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db

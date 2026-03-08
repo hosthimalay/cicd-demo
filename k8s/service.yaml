@@ -1,0 +1,85 @@
+# ════════════════════════════════════════════════════════════════════════════
+# Kubernetes Service — exposes the Deployment as a network endpoint
+# ════════════════════════════════════════════════════════════════════════════
+apiVersion: v1
+kind: Service
+metadata:
+  name: cicd-demo
+  namespace: production
+  labels:
+    app: cicd-demo
+  annotations:
+    # Tell AWS to create an internal (private) load balancer for this service
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+spec:
+  type: ClusterIP    # Internal only — external access via Ingress (see ingress.yaml)
+  selector:
+    app: cicd-demo   # Routes traffic to all pods with this label
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+      protocol: TCP
+
+---
+# ════════════════════════════════════════════════════════════════════════════
+# ConfigMap — non-sensitive environment configuration
+# Sensitive values (passwords, API keys) belong in Kubernetes Secrets or
+# AWS Secrets Manager — NEVER in a ConfigMap
+# ════════════════════════════════════════════════════════════════════════════
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cicd-demo-config
+  namespace: production
+data:
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+  PORT: "3000"
+
+---
+# ════════════════════════════════════════════════════════════════════════════
+# HorizontalPodAutoscaler — auto-scales pods based on CPU load
+# Requires metrics-server to be installed in the cluster
+# ════════════════════════════════════════════════════════════════════════════
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cicd-demo-hpa
+  namespace: production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cicd-demo
+  minReplicas: 2     # Always run at least 2 pods (for HA)
+  maxReplicas: 10    # Scale up to 10 under heavy load
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70   # Scale out when average CPU > 70%
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80   # Scale out when average memory > 80%
+
+---
+# ════════════════════════════════════════════════════════════════════════════
+# PodDisruptionBudget — ensures availability during node maintenance
+# Prevents Kubernetes from taking down too many pods at once during drains
+# ════════════════════════════════════════════════════════════════════════════
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cicd-demo-pdb
+  namespace: production
+spec:
+  minAvailable: 2    # Always keep at least 2 pods running during disruptions
+  selector:
+    matchLabels:
+      app: cicd-demo

@@ -1,0 +1,125 @@
+# ════════════════════════════════════════════════════════════════════════════
+# Kubernetes Deployment — cicd-demo
+# This defines HOW the app runs: replicas, image, resources, probes
+# ════════════════════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cicd-demo
+  namespace: production          # Overridden by Helm per environment
+  labels:
+    app: cicd-demo
+    version: "latest"            # Overridden by Helm with IMAGE_TAG
+    managed-by: helm
+spec:
+  # Number of pod replicas — Helm overrides this per environment
+  # staging: 1, production: 3
+  replicas: 3
+
+  # Zero-downtime rolling update strategy
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1          # Allow 1 extra pod during update (brief over-provisioning)
+      maxUnavailable: 0    # Never allow pods to go down before new ones are ready
+
+  # How Kubernetes finds which pods belong to this Deployment
+  selector:
+    matchLabels:
+      app: cicd-demo
+
+  template:
+    metadata:
+      labels:
+        app: cicd-demo
+        version: "latest"
+      annotations:
+        # Forces pod restart when ConfigMap changes (optional pattern)
+        checksum/config: "placeholder"
+
+    spec:
+      # Graceful shutdown: give the app 30 seconds to finish requests before kill
+      terminationGracePeriodSeconds: 30
+
+      # Security context for all containers in this pod
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000         # Matches the 'appuser' we created in Dockerfile
+        fsGroup: 1000
+
+      containers:
+        - name: cicd-demo
+          # Image is overridden by Helm with the exact ECR tag from Jenkins
+          image: PLACEHOLDER_ECR_REPO:PLACEHOLDER_TAG
+
+          imagePullPolicy: Always   # Always pull from ECR — never use a cached image
+
+          ports:
+            - containerPort: 3000
+              name: http
+              protocol: TCP
+
+          # Environment variables injected from ConfigMap and Secrets
+          env:
+            - name: NODE_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: cicd-demo-config
+                  key: NODE_ENV
+            - name: PORT
+              value: "3000"
+            - name: APP_VERSION
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['version']
+
+          # Resource requests and limits — CRITICAL for cluster stability
+          # requests: minimum guaranteed resources (used for scheduling)
+          # limits: maximum the container can use before throttle/OOM kill
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"       # 100 millicores = 0.1 CPU
+            limits:
+              memory: "256Mi"
+              cpu: "500m"       # 500 millicores = 0.5 CPU
+
+          # Liveness probe: is the container alive?
+          # If this fails: Kubernetes RESTARTS the pod
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10   # Wait 10s before first check (app startup time)
+            periodSeconds: 15         # Check every 15 seconds
+            failureThreshold: 3       # Restart after 3 consecutive failures
+            timeoutSeconds: 5
+
+          # Readiness probe: is the container ready to serve traffic?
+          # If this fails: Kubernetes REMOVES pod from load balancer (no restart)
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 3
+
+          # Security hardening — drop all Linux capabilities
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false   # Set true if app doesn't write to filesystem
+            capabilities:
+              drop:
+                - ALL
+
+      # Prefer spreading pods across different availability zones
+      # Prevents all pods dying if one AZ goes down
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: cicd-demo

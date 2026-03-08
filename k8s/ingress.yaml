@@ -1,0 +1,47 @@
+# ════════════════════════════════════════════════════════════════════════════
+# Ingress — routes external HTTPS traffic to the Service
+# Uses AWS Load Balancer Controller (ALB) on EKS
+# Install controller: https://docs.aws.amazon.com/eks/latest/userguide/aws-load-balancer-controller.html
+# ════════════════════════════════════════════════════════════════════════════
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cicd-demo-ingress
+  namespace: production
+  annotations:
+    # Use AWS Application Load Balancer
+    kubernetes.io/ingress.class: alb
+
+    # ALB scheme: internet-facing (public) or internal (private VPC only)
+    alb.ingress.kubernetes.io/scheme: internet-facing
+
+    # Route to pods directly (IP mode) — more efficient than instance mode
+    alb.ingress.kubernetes.io/target-type: ip
+
+    # Force HTTPS redirect
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+
+    # ACM certificate ARN for HTTPS (replace with your actual cert ARN)
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:eu-west-1:123456789:certificate/REPLACE-ME
+
+    # Health check configuration for ALB target group
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "30"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: "3"
+
+    # Security groups (replace with your SG IDs)
+    # alb.ingress.kubernetes.io/security-groups: sg-xxxxxxxx
+
+spec:
+  rules:
+    - host: cicd-demo.example.com     # Replace with your actual domain
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cicd-demo
+                port:
+                  number: 80

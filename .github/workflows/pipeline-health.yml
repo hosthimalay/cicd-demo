@@ -1,0 +1,40 @@
+# ════════════════════════════════════════════════════════════════════════════
+# .github/workflows/pipeline-health.yml
+#
+# PURPOSE: Weekly pipeline health digest.
+#          Runs pipeline_monitor.py to query Jenkins API and send
+#          a Slack report of the week's DORA metrics.
+# ════════════════════════════════════════════════════════════════════════════
+name: Weekly Pipeline Health Report
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"    # Every Monday at 8am UTC
+  workflow_dispatch:        # Also allow manual trigger
+
+jobs:
+  report:
+    name: Generate Health Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run pipeline health monitor
+        env:
+          JENKINS_USER: ${{ secrets.JENKINS_USER }}
+          JENKINS_TOKEN: ${{ secrets.JENKINS_TOKEN }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        run: |
+          python3 scripts/python/pipeline_monitor.py \
+            --jenkins-url ${{ secrets.JENKINS_URL }} \
+            --job cicd-demo \
+            --days 7 \
+            --slack "$SLACK_WEBHOOK"

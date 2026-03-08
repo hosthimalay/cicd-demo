@@ -1,0 +1,55 @@
+# ════════════════════════════════════════════════════════════════════════════
+# docker-compose.yml — Local development environment
+#
+# Starts the app + Jenkins locally so you can test the full pipeline
+# without needing AWS.
+#
+# USAGE:
+#   Start everything:   docker-compose up -d
+#   View logs:          docker-compose logs -f app
+#   Stop everything:    docker-compose down
+#   Full reset:         docker-compose down -v  (also deletes volumes)
+# ════════════════════════════════════════════════════════════════════════════
+version: "3.9"
+
+services:
+
+  # ── Your Node.js application ───────────────────────────────────────────────
+  app:
+    build:
+      context: ./app
+      target: runtime           # Use the production runtime stage
+    container_name: cicd-demo-app
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      APP_VERSION: local
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # ── Jenkins CI/CD server ───────────────────────────────────────────────────
+  jenkins:
+    image: jenkins/jenkins:lts
+    container_name: cicd-jenkins
+    ports:
+      - "8080:8080"     # Jenkins UI
+      - "50000:50000"   # JNLP agent port
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      # Allow Jenkins to run Docker commands (Docker-in-Docker)
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      JAVA_OPTS: "-Djenkins.install.runSetupWizard=false"
+    restart: unless-stopped
+
+# ── Persistent volumes ────────────────────────────────────────────────────────
+volumes:
+  jenkins_home:
+    driver: local
